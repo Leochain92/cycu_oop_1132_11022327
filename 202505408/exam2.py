@@ -26,7 +26,7 @@ def to_julian_date(dt):
     return jd
 
 def calculate_time_info():
-    input_time_str = input("請輸入時間（格式為 YYYY-MM-DD HH:MM）：")
+    input_time_str = input("請輸入時間（格式為 YYYY-MM-DD HH：MM：")
 
     try:
         # 假設輸入是台灣時間（UTC+8）

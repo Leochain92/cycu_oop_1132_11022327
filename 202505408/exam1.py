@@ -1,46 +1,36 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import lognorm
+from scipy.stats import norm
 
-def plot_lognormal_cdf(mu, sigma, x_range, output_file):
-    """
-    繪製對數常態分布的累積分布函數 (CDF) 並儲存為 JPG 檔案。
-
-    :param mu: 對數常態分布的 μ
-    :param sigma: 對數常態分布的 σ
-    :param x_range: x 軸範圍 (tuple，格式為 (start, end, num_points))
-    :param output_file: 輸出的 JPG 檔案名稱
-    """
-    # 計算對數常態分布的 s 和 scale
-    s = sigma
-    scale = np.exp(mu)
-
-    # 定義 x 軸範圍
-    x = np.linspace(*x_range)
-
-    # 計算累積分布函數 (CDF)
-    cdf = lognorm.cdf(x, s, scale=scale)
-
-    # 繪製圖形
-    plt.figure(figsize=(8, 6))
-    plt.plot(x, cdf, label='Lognormal CDF', color='blue')
-    plt.title('Lognormal Cumulative Distribution Function')
+def plot_normal_pdf(mu, sigma):
+    # 建立 x 軸資料
+    x = np.linspace(mu - 4*sigma, mu + 4*sigma, 1000)
+    # 使用 norm.pdf 計算 y 軸機率密度
+    y = norm.pdf(x, mu, sigma)
+    
+    # 畫圖
+    plt.figure(figsize=(8, 5))
+    plt.plot(x, y, label=f'μ={mu}, σ={sigma}')
+    plt.title('Normal Distribution PDF')
     plt.xlabel('x')
-    plt.ylabel('CDF')
+    plt.ylabel('Probability Density')
     plt.grid(True)
     plt.legend()
+    
+    # 儲存圖檔
+    plt.savefig('normal_pdf.jpg')
+    plt.close()
 
-    # 儲存為 JPG 檔案
-    plt.savefig(output_file, format='jpg')
-    plt.show()
+# 手動輸入 μ 和 σ
+try:
+    mu = float(input("請輸入平均值 μ："))
+    sigma = float(input("請輸入標準差 σ："))
+    if sigma <= 0:
+        raise ValueError("標準差 σ 必須大於 0")
+except ValueError as e:
+    print(f"輸入錯誤：{e}")
+    exit()
 
-# 主程式
-if __name__ == "__main__":
-    # 定義參數
-    mu = 1.5  # μ
-    sigma = 0.4  # σ
-    x_range = (0.01, 10, 1000)  # x 軸範圍 (起始, 結束, 點數)
-    output_file = 'lognormal_cdf.jpg'  # 輸出的檔案名稱
-
-    # 呼叫函式繪製圖形
-    plot_lognormal_cdf(mu, sigma, x_range, output_file)
+# 呼叫函式繪製圖表
+plot_normal_pdf(mu, sigma)
+print("圖表已儲存為 'normal_pdf.jpg'")

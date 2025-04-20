@@ -52,7 +52,7 @@ class BusRouteInfo:
         for stop in stop_elements:
             try:
                 # 提取站點資訊
-                arrival_info = stop.select_one('.auto-list-stationlist-position-time').text.strip()  # 到達時間
+                arrival_info = stop.select_one('.auto-list-stationlist-position-time').text.strip()  # 公車到達時間
                 stop_number = stop.select_one('.auto-list-stationlist-number').text.strip()  # 車站序號
                 stop_name = stop.select_one('.auto-list-stationlist-place').text.strip()  # 車站名稱
                 stop_id = stop.select_one('input[name="item.UniStopId"]')['value']  # 車站編號
@@ -71,15 +71,14 @@ class BusRouteInfo:
         csv_filename = f"data/bus_route_{self.rid}.csv"
         with open(csv_filename, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(["arrival_info", "stop_number", "stop_name", "stop_id", "latitude", "longitude"])
+            writer.writerow(["公車到達時間", "車站序號", "車站名稱", "車站編號", "latitude", "longitude"])
             writer.writerows(stops)
 
         print(f"資料已儲存至 {csv_filename}")
 
         # 顯示站點資訊
         for stop in stops:
-            print(f"到達時間: {stop[0]}, 車站序號: {stop[1]}, 車站名稱: {stop[2]}, 車站編號: {stop[3]}, 緯度: {stop[4]}, 經度: {stop[5]}")
-
+            print(f"{stop[0]}, {stop[1]}, {stop[2]}, {stop[3]}, {stop[4]}, {stop[5]}")
 
 if __name__ == "__main__":
     # 讓使用者輸入公車代碼和方向
