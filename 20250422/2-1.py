@@ -31,6 +31,6 @@ def draw_csv_to_png(inputfile: str, outputfile: str):
     plt.close()
 
 if __name__ == "__main__":
-    inputfile = "20250422/bus_route_0161000900.csv"
-    outputfile = "20250422/0161000900_bus_stops.png"
+    inputfile = "20250429/bus_route_0161000900.csv"
+    outputfile = "20250429/0161000900_bus_stops.png"
     draw_csv_to_png(inputfile, outputfile)
