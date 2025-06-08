@@ -127,9 +127,11 @@ if __name__ == "__main__":
         print(f"Error reading CSV file '{ROUTE_LIST_CSV_PATH}': {e}")
         exit()
 
-    # 準備一個列表來儲存所有包含站點資訊的行
-    all_routes_with_stops_data = []
-
+    # 判斷輸出 CSV 檔案是否已存在，以決定是否寫入 header
+    # 注意：如果每次執行都想從頭開始一個全新的 OUTPUT_FILEPATH，請在運行前手動刪除舊的檔案。
+    # 如果希望在檔案中追加，並根據檔案是否存在來決定是否寫入 header，則保持此邏輯。
+    output_file_exists = os.path.exists(OUTPUT_FILEPATH)
+    
     # 2. 遍歷每個路線代碼，抓取站點名稱並合併
     processed_count = 0
     total_routes = len(df_routes_base)
@@ -139,27 +141,23 @@ if __name__ == "__main__":
         route_name = row['route_name']
         is_processed = row['is_processed']
         
-        current_route_data = {'route_id': route_id, 'route_name': route_name} # 為最終數據集準備的當前路線數據
+        # 為最終數據集準備的當前路線數據 (單獨一個字典用於單行數據)
+        current_route_output_data = {'route_id': route_id, 'route_name': route_name} 
 
         if is_processed:
             print(f"\n--- Skipping Route: {route_name} ({route_id}) - Already processed. ---")
-            
-            # 如果已經處理過，從原始 df_routes_base 獲取其最終的站點數據，以避免重新抓取
-            # 這需要將所有站點資料也讀入，或在處理時直接加入 all_routes_with_stops_data
-            # 由於我們沒有從 OUTPUT_FILEPATH 讀取的功能，這裡就直接跳過，最終的 CSV 將在新的執行中從頭構建
-            # 如果希望跳過的路線數據也出現在最終 CSV 中，則需要修改 OUTPUT_FILEPATH 的生成方式
-            # (例如：在開始時讀取 OUTPUT_FILEPATH 的內容，並過濾掉未處理的路線)
-            # 為了簡潔和符合 '新建立' CSV 的需求，這裡就直接跳過了
-            
-            # 如果希望已處理的路線資料也出現在最終的 `all_bus_routes_with_stops_data` 中
-            # 則需要讀取 `all_bus_routes_with_stops.csv` 並將其內容初始化到 `all_routes_with_stops_data`
-            # 這裡為了每次執行都是「新建立」輸出檔案，就直接跳過。
+            # 如果是跳過，則理論上這條數據已經在 OUTPUT_FILEPATH 中了，無需再次處理和寫入
+            # 如果你想要在每次運行時，即使是跳過的數據也確保會出現在最終的 OUTPUT_FILEPATH 中
+            # 則需要在一開始就讀取 OUTPUT_FILEPATH 的內容並存入一個列表，再在此處加入已處理的數據
+            # 為了避免複雜化，這裡就直接跳過了，假設 OUTPUT_FILEPATH 會在第一次運行時完整生成。
             continue # 跳過已處理的路線
 
         print(f"\n--- Processing Route: {route_name} ({route_id}) --- ({processed_count + 1}/{total_routes})")
         
         # --- 處理 'go' (去程) 方向 ---
         go_stop_names = []
+        go_latitudes = []
+        go_longitudes = []
         go_fetch_success = False
         try:
             route_info_go = BusRouteInfo(route_id, direction="go")
@@ -167,21 +165,27 @@ if __name__ == "__main__":
             
             if not df_stops_go.empty:
                 go_stop_names = df_stops_go['stop_name'].tolist()
-                print(f"  Found {len(go_stop_names)} stops for 'go' direction.")
+                go_latitudes = df_stops_go['latitude'].tolist()
+                go_longitudes = df_stops_go['longitude'].tolist()
+                print(f"  Found {len(go_stop_names)} stops for 'go' direction.")
                 go_fetch_success = True
             else:
-                print(f"  No stop data found for 'go' direction.")
+                print(f"  No stop data found for 'go' direction.")
             
             time.sleep(1) # Add a small delay between requests
 
         except Exception as e:
-            print(f"  Error processing 'go' direction for route {route_id}: {e}")
+            print(f"  Error processing 'go' direction for route {route_id}: {e}")
             
         for i, stop_name in enumerate(go_stop_names):
-            current_route_data[f'stop_name_go_{i+1}'] = stop_name
+            current_route_output_data[f'stop_name_go_{i+1}'] = stop_name
+            current_route_output_data[f'latitude_go_{i+1}'] = go_latitudes[i]
+            current_route_output_data[f'longitude_go_{i+1}'] = go_longitudes[i]
             
         # --- 處理 'come' (返程) 方向 ---
         come_stop_names = []
+        come_latitudes = []
+        come_longitudes = []
         come_fetch_success = False
         try:
             route_info_come = BusRouteInfo(route_id, direction="come")
@@ -189,32 +193,53 @@ if __name__ == "__main__":
 
             if not df_stops_come.empty:
                 come_stop_names = df_stops_come['stop_name'].tolist()
-                print(f"  Found {len(come_stop_names)} stops for 'come' direction.")
+                come_latitudes = df_stops_come['latitude'].tolist()
+                come_longitudes = df_stops_come['longitude'].tolist()
+                print(f"  Found {len(come_stop_names)} stops for 'come' direction.")
                 come_fetch_success = True
             else:
-                print(f"  No stop data found for 'come' direction.")
+                print(f"  No stop data found for 'come' direction.")
 
             time.sleep(1) # Add a small delay between requests
 
         except Exception as e:
-            print(f"  Error processing 'come' direction for route {route_id}: {e}")
+            print(f"  Error processing 'come' direction for route {route_id}: {e}")
         
         for i, stop_name in enumerate(come_stop_names):
-            current_route_data[f'stop_name_come_{i+1}'] = stop_name
+            current_route_output_data[f'stop_name_come_{i+1}'] = stop_name
+            current_route_output_data[f'latitude_come_{i+1}'] = come_latitudes[i]
+            current_route_output_data[f'longitude_come_{i+1}'] = come_longitudes[i]
+        
+        # 將單一路線的數據轉換為 DataFrame，並追加寫入 CSV
+        single_route_df = pd.DataFrame([current_route_output_data])
+        
+        # 確保輸出目錄存在 (BASE_PATH)
+        os.makedirs(os.path.dirname(OUTPUT_FILEPATH), exist_ok=True)
+
+        # 寫入 CSV
+        # 如果檔案不存在，則寫入 header；否則，追加且不寫入 header
+        single_route_df.to_csv(
+            OUTPUT_FILEPATH, 
+            mode='a', # 追加模式
+            index=False, 
+            encoding='utf-8-sig', 
+            header=not output_file_exists # 只有在檔案不存在時才寫入 header
+        )
+        
+        # 寫入後，將 output_file_exists 設為 True，確保後續追加不再寫入 header
+        output_file_exists = True 
+        
+        print(f"--- Route {route_id} data appended to {OUTPUT_FILEPATH}. ---")
 
         # 僅當去程或返程至少有一個有數據時，才將該路線標記為已處理
-        # 這裡的定義是「只要嘗試抓取並成功返回了數據（即使是空數據），就視為已處理」
-        # 如果您希望只有在兩邊都有實際站名列表時才標記，則條件可以更嚴格:
-        # if go_fetch_success or come_fetch_success:
-        #    df_routes_base.loc[index, 'is_processed'] = True
-        
-        # 這裡我們定義為只要嘗試處理過（無論是否拿到站點，但沒有致命錯誤），就標記為已處理
-        # 確保 `current_route_data` 被添加到 `all_routes_with_stops_data`
-        all_routes_with_stops_data.append(current_route_data) 
-        df_routes_base.loc[index, 'is_processed'] = True # 在 df_routes_base 中更新標記
+        if go_fetch_success or come_fetch_success: # 如果有成功抓取到任何一個方向的數據
+            df_routes_base.loc[index, 'is_processed'] = True # 在 df_routes_base 中更新標記
+        else:
+            print(f"  Warning: No data successfully fetched for route {route_id}. Not marked as processed.")
+
 
         processed_count += 1
-        print(f"--- Finished processing route {route_id}. Marked as processed. ---")
+        print(f"--- Finished processing route {route_id}. Status updated. ---")
         
         # 定期保存進度到原始的路線列表 CSV，以防程式崩潰
         if processed_count % 10 == 0: # 每處理10條路線，保存一次
@@ -229,20 +254,9 @@ if __name__ == "__main__":
         else:
             time.sleep(3) # 一般延遲
 
-    # 3. 將所有資料合併成一個 DataFrame 並匯出
-    print(f"\nMerging all data and exporting to {OUTPUT_FILEPATH}...")
-    final_df = pd.DataFrame(all_routes_with_stops_data)
-
-    # 確保輸出目錄存在 (BASE_PATH)
-    os.makedirs(os.path.dirname(OUTPUT_FILEPATH), exist_ok=True)
-    
-    # 匯出為 CSV 檔案，使用 utf-8-sig 確保中文顯示正確
-    final_df.to_csv(OUTPUT_FILEPATH, index=False, encoding='utf-8-sig')
-    
-    print(f"\nAll {processed_count} (newly processed) routes added to combined output.")
-    print(f"Final combined bus stop names saved to: {OUTPUT_FILEPATH}")
-
-    # 4. 最後保存一次更新後的路線列表狀態
-    print(f"\nSaving final processing status to {ROUTE_LIST_CSV_PATH}...")
+    # 3. 程式結束時，最終保存一次更新後的路線列表狀態
+    print(f"\nFinal save of processing status to {ROUTE_LIST_CSV_PATH}...")
     df_routes_base.to_csv(ROUTE_LIST_CSV_PATH, index=False, encoding='utf-8-sig')
     print("Final status saved. Script finished.")
+
+    print(f"\nAll processed routes' stop data (including newly processed and skipped) are available in: {OUTPUT_FILEPATH}")

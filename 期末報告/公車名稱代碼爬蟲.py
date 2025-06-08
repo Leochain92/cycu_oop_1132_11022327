@@ -308,7 +308,7 @@ if __name__ == "__main__":
     print("Bus route list fetched, parsed, and saved to database.")
 
     # Define the exact CSV output path
-    csv_output_path = r'C:\Users\User\Documents\GitHub\cycu_oop_1132_11022327\期末報告\taipei_bus_routes.csv'
+    csv_output_path = r'C:\Users\truck\OneDrive\文件\GitHub\cycu_oop_1132_11022327\期末報告\taipei_bus_routes.csv'
     route_list.export_to_csv(csv_output_path)
 
 
