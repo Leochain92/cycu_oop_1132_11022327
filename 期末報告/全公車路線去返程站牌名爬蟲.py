@@ -6,7 +6,7 @@ import os
 import time
 
 # Define the base path for input and output files
-BASE_PATH = r'C:\Users\User\Documents\GitHub\cycu_oop_1132_11022327\期末報告'
+BASE_PATH = r'C:\Users\truck\OneDrive\文件\GitHub\cycu_oop_1132_11022327\期末報告'
 ROUTE_LIST_CSV = 'taipei_bus_routes.csv' # 原始路線列表 CSV
 OUTPUT_FILENAME = 'all_bus_routes_with_stops.csv' # 單一輸出 CSV 檔名
 
