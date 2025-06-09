@@ -4,6 +4,9 @@ import time
 import webbrowser
 import re
 import csv
+import json
+import asyncio
+from playwright.async_api import async_playwright
 
 # --- 引入 Selenium 相關的庫 ---
 from selenium import webdriver
@@ -17,122 +20,207 @@ from webdriver_manager.chrome import ChromeDriverManager
 # --- 獲取公車路線的站牌名稱和真實經緯度函式 ---
 def get_bus_route_stops_from_ebus(route_id, bus_name, driver_instance):
     """
-    從台北市公車動態資訊系統抓取指定路線的站牌名稱、真實經緯度及預估到站時間。
-    返回一個站牌列表，每個元素是字典，包含 'name', 'lat', 'lon', 'stop_id', 'direction', 'estimated_time'。
+    從台北市公車動態資訊系統抓取指定路線的站牌名稱和真實經緯度。
+    返回一個站牌列表，每個元素是字典，包含 'name', 'lat', 'lon', 'stop_id'。
     """
-    print(f"\n正在從 ebus.gov.taipei 獲取路線 '{bus_name}' ({route_id}) 的站牌數據和預估到站時間...")
+    print(f"\n正在從 ebus.gov.taipei 獲取路線 '{bus_name}' ({route_id}) 的站牌數據...")
 
     url = f'https://ebus.gov.taipei/Route/StopsOfRoute?routeid={route_id}'
     wait = WebDriverWait(driver_instance, 20)
 
-    all_stops_data = [] # 用於存放所有站牌數據，包括去程和返程
-
+    stops_with_coords = []
     try:
         driver_instance.get(url)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.auto-list-stationlist-place')))
-        time.sleep(2) # 額外延遲確保渲染和JavaScript執行
+        time.sleep(1.5) # 額外延遲確保渲染
 
-        # --- 處理去程站牌 ---
-        try:
-            go_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a.stationlist-go")))
-            go_button.click()
-            print("已點擊 '去程' 按鈕。")
-            time.sleep(3) # 給予足夠時間載入去程資料
-            
-            # 使用更精確的選擇器來匹配站牌列表項，並從中提取所需信息
-            go_elements = driver_instance.find_elements(By.CSS_SELECTOR, "#GoDirectionRoute li")
-            for element in go_elements:
-                try:
-                    name_elem = element.find_element(By.CSS_SELECTOR, ".auto-list-stationlist-place")
-                    name = name_elem.text.strip()
-                    
-                    stop_id_input = element.find_element(By.CSS_SELECTOR, "input[name='item.UniStopId']")
-                    stop_id = stop_id_input.get_attribute("value")
-                    
-                    lat_input = element.find_element(By.CSS_SELECTOR, "input[name='item.Latitude']")
-                    lat = float(lat_input.get_attribute("value"))
-                    
-                    lon_input = element.find_element(By.CSS_SELECTOR, "input[name='item.Longitude']")
-                    lon = float(lon_input.get_attribute("value"))
+        page_content = driver_instance.page_source
 
-                    # 抓取預估到站時間
-                    status_elem = element.find_element(By.CSS_SELECTOR, ".auto-list-stationlist-position")
-                    estimated_time = status_elem.text.strip() if status_elem.text.strip() else "無資料"
+        pattern = re.compile(
+            r'<li>.*?<span class="auto-list-stationlist-position.*?">(.*?)</span>\s*'
+            r'<span class="auto-list-stationlist-number">\s*(\d+)</span>\s*'
+            r'<span class="auto-list-stationlist-place">(.*?)</span>.*?'
+            r'<input[^>]+name="item\.UniStopId"[^>]+value="(\d+)"[^>]*>.*?'
+            r'<input[^>]+name="item\.Latitude"[^>]+value="([\d\.]+)"[^>]*>.*?'
+            r'<input[^>]+name="item\.Longitude"[^>]+value="([\d\.]+)"[^>]*>',
+            re.DOTALL
+        )
 
-                    all_stops_data.append({
-                        "name": name,
-                        "lat": lat,
-                        "lon": lon,
-                        "stop_id": stop_id,
-                        "direction": "去程",
-                        "estimated_time": estimated_time
-                    })
-                except Exception as e_stop:
-                    # 某些li元素可能不是標準站牌，或者缺少部分資訊，跳過
-                    # print(f"處理去程站牌時發生錯誤：{e_stop}，可能為非標準站牌，已跳過。")
-                    pass # 不印出太多雜訊
-            print(f"已獲取去程 {len([s for s in all_stops_data if s['direction'] == '去程'])} 個站牌數據。")
+        matches = pattern.findall(page_content)
 
-        except Exception as e_go:
-            print(f"處理去程路線時發生錯誤或無去程資料：{e_go}")
+        if not matches:
+            print(f"未在路線 {bus_name} 中找到匹配的站點數據。")
+            return []
 
-        # --- 處理返程站牌 ---
-        try:
-            return_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a.stationlist-come")))
-            return_button.click()
-            print("已點擊 '返程' 按鈕。")
-            time.sleep(3) # 給予足夠時間載入返程資料
+        for m in matches:
+            try:
+                lat = float(m[4])
+                lon = float(m[5])
+            except ValueError:
+                lat = None
+                lon = None
 
-            # 使用更精確的選擇器來匹配站牌列表項，並從中提取所需信息
-            return_elements = driver_instance.find_elements(By.CSS_SELECTOR, "#BackDirectionRoute li")
-            for element in return_elements:
-                try:
-                    name_elem = element.find_element(By.CSS_SELECTOR, ".auto-list-stationlist-place")
-                    name = name_elem.text.strip()
-                    
-                    stop_id_input = element.find_element(By.CSS_SELECTOR, "input[name='item.UniStopId']")
-                    stop_id = stop_id_input.get_attribute("value")
-                    
-                    lat_input = element.find_element(By.CSS_SELECTOR, "input[name='item.Latitude']")
-                    lat = float(lat_input.get_attribute("value"))
-                    
-                    lon_input = element.find_element(By.CSS_SELECTOR, "input[name='item.Longitude']")
-                    lon = float(lon_input.get_attribute("value"))
-
-                    # 抓取預估到站時間
-                    status_elem = element.find_element(By.CSS_SELECTOR, ".auto-list-stationlist-position")
-                    estimated_time = status_elem.text.strip() if status_elem.text.strip() else "無資料"
-
-                    all_stops_data.append({
-                        "name": name,
-                        "lat": lat,
-                        "lon": lon,
-                        "stop_id": stop_id,
-                        "direction": "返程",
-                        "estimated_time": estimated_time
-                    })
-                except Exception as e_stop:
-                    # 某些li元素可能不是標準站牌，或者缺少部分資訊，跳過
-                    # print(f"處理返程站牌時發生錯誤：{e_stop}，可能為非標準站牌，已跳過。")
-                    pass # 不印出太多雜訊
-            print(f"已獲取返程 {len([s for s in all_stops_data if s['direction'] == '返程'])} 個站牌數據。")
-
-        except Exception as e_return:
-            print(f"處理返程路線時發生錯誤或無返程資料：{e_return}")
+            if lat is not None and lon is not None:
+                stops_with_coords.append({
+                    "name": m[2],
+                    "lat": lat,
+                    "lon": lon,
+                    "stop_id": int(m[3]) if m[3].isdigit() else None,
+                    "sequence": int(m[1]) if m[1].isdigit() else None
+                })
+            else:
+                print(f"警告：站點 '{m[2]}' 經緯度無效，已跳過。")
 
     except Exception as e:
         print(f"[錯誤] 獲取路線 {bus_name} 站牌數據失敗：{e}")
-        all_stops_data = []
+        stops_with_coords = []
 
-    print(f"路線 '{bus_name}' 的站牌數據獲取完成。共 {len(all_stops_data)} 站 (包含去返程)。")
-    return all_stops_data
+    print(f"路線 '{bus_name}' 的站牌數據獲取完成。共 {len(stops_with_coords)} 站。")
+    return stops_with_coords
 
-# --- 顯示地圖函式 (更新以使用實際預估時間) ---
-def display_bus_route_on_map(route_name, stops_data, bus_location=None):
+# --- 獲取公車預估到站時間函式 ---
+def get_bus_estimated_times(route_id, bus_name, driver_instance):
     """
-    將公車路線、站牌和預估時間顯示在地圖上。
-    stops_data: 列表，每個元素是一個字典，包含 'name', 'lat', 'lon', 'estimated_time', 'direction'
-    bus_location: 字典，包含 'lat', 'lon'，可選 (此版本未使用，因為公車即時位置需額外抓取)
+    從台北市公車動態資訊系統獲取指定路線的預估到站時間。
+    返回一個字典，鍵為站牌名稱，值為預估時間資訊。
+    """
+    print(f"\n正在獲取路線 '{bus_name}' 的預估到站時間...")
+    
+    estimated_times = {}
+    bus_locations = []
+    
+    try:
+        # 訪問路線的即時資訊頁面
+        url = f'https://ebus.gov.taipei/Route/BusInfo?routeid={route_id}'
+        driver_instance.get(url)
+        
+        # 等待頁面載入
+        wait = WebDriverWait(driver_instance, 15)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.auto-list-stationlist')))
+        time.sleep(2)  # 額外等待確保動態內容載入
+        
+        # 嘗試找到預估時間的元素
+        # 這裡可能需要根據實際的HTML結構來調整選擇器
+        time_elements = driver_instance.find_elements(By.CSS_SELECTOR, '.auto-list-stationlist li')
+        
+        for element in time_elements:
+            try:
+                # 獲取站牌名稱
+                station_name_elem = element.find_element(By.CSS_SELECTOR, '.auto-list-stationlist-place')
+                station_name = station_name_elem.text.strip() if station_name_elem else None
+                
+                # 獲取預估時間 - 可能在不同的位置
+                time_info = "暫無資訊"
+                
+                # 嘗試多種可能的時間顯示元素
+                time_selectors = [
+                    '.auto-list-stationlist-time',
+                    '.bus-time',
+                    '.estimate-time',
+                    '.arrival-time'
+                ]
+                
+                for selector in time_selectors:
+                    try:
+                        time_elem = element.find_element(By.CSS_SELECTOR, selector)
+                        if time_elem and time_elem.text.strip():
+                            time_info = time_elem.text.strip()
+                            break
+                    except:
+                        continue
+                
+                # 如果沒有找到專門的時間元素，嘗試從整個元素的文本中提取
+                if time_info == "暫無資訊":
+                    element_text = element.text
+                    # 使用正則表達式尋找時間模式
+                    time_patterns = [
+                        r'(\d+)\s*分',  # X分
+                        r'進站中',
+                        r'即將到站',
+                        r'暫停服務',
+                        r'末班車已過'
+                    ]
+                    
+                    for pattern in time_patterns:
+                        match = re.search(pattern, element_text)
+                        if match:
+                            time_info = match.group(0)
+                            break
+                
+                if station_name:
+                    estimated_times[station_name] = time_info
+                    
+            except Exception as e:
+                print(f"處理站點預估時間時發生錯誤: {e}")
+                continue
+        
+        # 嘗試獲取公車位置資訊
+        try:
+            bus_position_elements = driver_instance.find_elements(By.CSS_SELECTOR, '[data-lat][data-lng]')
+            for pos_elem in bus_position_elements:
+                try:
+                    lat = float(pos_elem.get_attribute('data-lat'))
+                    lon = float(pos_elem.get_attribute('data-lng'))
+                    if lat and lon:
+                        bus_locations.append({'lat': lat, 'lon': lon})
+                except:
+                    continue
+        except Exception as e:
+            print(f"獲取公車位置時發生錯誤: {e}")
+        
+    except Exception as e:
+        print(f"[錯誤] 獲取預估時間失敗：{e}")
+    
+    print(f"已獲取 {len(estimated_times)} 個站點的預估時間資訊")
+    if bus_locations:
+        print(f"已獲取 {len(bus_locations)} 個公車位置")
+    
+    return estimated_times, bus_locations
+
+# --- 使用替代API獲取預估時間 ---
+def get_estimated_times_from_api(route_name, stops_data, driver_instance):
+    """
+    嘗試使用台北市公車API獲取預估時間
+    """
+    print(f"\n嘗試透過API獲取路線 '{route_name}' 的預估時間...")
+    
+    estimated_times = {}
+    
+    try:
+        # 構建API URL - 這裡使用台北市政府開放資料API
+        # 注意：實際使用時可能需要申請API Key
+        api_url = f"https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2.0/youbike_immediate.json"
+        
+        # 由於我們在這個示例中無法直接調用外部API，
+        # 我們將為每個站點生成模擬的預估時間
+        for stop in stops_data:
+            # 生成模擬的預估時間
+            random_scenarios = [
+                "進站中",
+                "即將到站", 
+                f"{random.randint(1, 15)}分",
+                f"{random.randint(16, 30)}分",
+                "暫無資訊"
+            ]
+            estimated_times[stop['name']] = random.choice(random_scenarios)
+            
+        print("已生成模擬預估時間資訊")
+        
+    except Exception as e:
+        print(f"API獲取失敗: {e}")
+        # 如果API失敗，生成基本的模擬數據
+        for stop in stops_data:
+            estimated_times[stop['name']] = "查詢中..."
+    
+    return estimated_times
+
+# --- 顯示地圖函式 ---
+def display_bus_route_on_map(route_name, stops_data, bus_locations=None, estimated_times=None):
+    """
+    將公車路線、站牌、預估時間和公車位置顯示在地圖上。
+    stops_data: 列表，每個元素是一個字典，包含 'name', 'lat', 'lon'
+    bus_locations: 列表，包含公車位置的字典 [{'lat': xx, 'lon': xx}, ...]
+    estimated_times: 字典，鍵為站牌名稱，值為預估時間，可選
     """
     if not stops_data:
         print(f"沒有路線 '{route_name}' 的站牌數據可顯示。")
@@ -144,59 +232,85 @@ def display_bus_route_on_map(route_name, stops_data, bus_location=None):
     avg_lat = sum(s["lat"] for s in stops_data) / len(stops_data)
     avg_lon = sum(s["lon"] for s in stops_data) / len(stops_data)
     map_center = [avg_lat, avg_lon]
-    m = folium.Map(location=map_center, zoom_start=14)
-
-    # 分離去程和返程，以便繪製兩條線
-    go_direction_stops = [s for s in stops_data if s["direction"] == "去程"]
-    return_direction_stops = [s for s in stops_data if s["direction"] == "返程"]
+    m = folium.Map(location=map_center, zoom_start=13)
 
     # 添加站牌標記和彈出視窗
-    for stop in stops_data:
+    for i, stop in enumerate(stops_data):
         stop_name = stop["name"]
         coords = [stop["lat"], stop["lon"]]
-        est_time_text = stop.get("estimated_time", "未知")
-        direction_text = stop.get("direction", "")
 
-        popup_html = f"<b>{stop_name}</b><br>方向: {direction_text}<br>預估時間: {est_time_text}"
+        est_time_text = estimated_times.get(stop_name, "未知") if estimated_times else "未知"
         
-        # 根據方向給予不同顏色
-        icon_color = "blue" if direction_text == "去程" else "purple"
+        # 根據預估時間設置不同的顏色
+        if est_time_text in ["進站中", "即將到站"]:
+            icon_color = "red"
+        elif "分" in est_time_text:
+            try:
+                minutes = int(re.search(r'(\d+)', est_time_text).group(1))
+                if minutes <= 5:
+                    icon_color = "orange"
+                elif minutes <= 15:
+                    icon_color = "blue"
+                else:
+                    icon_color = "gray"
+            except:
+                icon_color = "blue"
+        else:
+            icon_color = "gray"
+        
+        popup_html = f"""
+        <div style='font-family: Arial; width: 200px;'>
+            <b style='font-size: 14px;'>{stop_name}</b><br>
+            <hr style='margin: 5px 0;'>
+            <span style='color: #2E8B57;'><b>預估時間:</b></span> {est_time_text}<br>
+            <span style='color: #4682B4;'><b>站序:</b></span> {i+1}<br>
+            <span style='color: #666;'><b>座標:</b></span> {coords[0]:.6f}, {coords[1]:.6f}
+        </div>
+        """
 
         folium.Marker(
             location=coords,
-            popup=folium.Popup(popup_html, max_width=300),
+            popup=folium.Popup(popup_html, max_width=250),
+            tooltip=f"{stop_name} - {est_time_text}",
             icon=folium.Icon(color=icon_color, icon="info-sign")
         ).add_to(m)
 
-    # 繪製去程路線路徑
-    if len(go_direction_stops) > 1:
-        go_route_coords_list = [[s["lat"], s["lon"]] for s in go_direction_stops]
+    # 添加公車當前位置標記 (如果提供)
+    if bus_locations:
+        for i, bus_loc in enumerate(bus_locations):
+            folium.Marker(
+                location=[bus_loc["lat"], bus_loc["lon"]],
+                popup=folium.Popup(f"<b>公車位置 #{i+1}</b><br>路線: {route_name}", max_width=200),
+                tooltip=f"公車 #{i+1}",
+                icon=folium.Icon(color="red", icon="bus", prefix="fa")
+            ).add_to(m)
+
+    # 繪製路線路徑 (使用實際站牌的順序)
+    route_coords_list = [[stop["lat"], stop["lon"]] for stop in stops_data]
+    if len(route_coords_list) > 1:
         folium.PolyLine(
-            locations=go_route_coords_list,
+            locations=route_coords_list,
             color='green',
-            weight=5,
-            opacity=0.7,
-            tooltip=f"路線: {route_name} (去程)"
+            weight=4,
+            opacity=0.8,
+            tooltip=f"路線: {route_name}"
         ).add_to(m)
 
-    # 繪製返程路線路徑
-    if len(return_direction_stops) > 1:
-        return_route_coords_list = [[s["lat"], s["lon"]] for s in return_direction_stops]
-        folium.PolyLine(
-            locations=return_route_coords_list,
-            color='orange',
-            weight=5,
-            opacity=0.7,
-            tooltip=f"路線: {route_name} (返程)"
-        ).add_to(m)
-
-    # 添加公車當前位置標記 (如果提供) - 這裡保留，但本範例未實際抓取公車即時位置
-    if bus_location:
-        folium.Marker(
-            location=[bus_location["lat"], bus_location["lon"]],
-            popup=folium.Popup(f"<b>公車位置</b><br>路線: {route_name}", max_width=200),
-            icon=folium.Icon(color="red", icon="bus", prefix="fa")
-        ).add_to(m)
+    # 添加圖例
+    legend_html = '''
+    <div style="position: fixed; 
+                top: 10px; right: 10px; width: 200px; height: 140px; 
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 10px">
+    <b>圖例說明</b><br>
+    🔴 進站中/即將到站<br>
+    🟠 5分鐘內<br>
+    🔵 5-15分鐘<br>
+    ⚫ 15分鐘以上/無資訊<br>
+    🚌 公車位置
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
 
     # 將地圖保存為HTML文件並自動打開
     map_filename = f"bus_route_{route_name}_map.html"
@@ -206,52 +320,93 @@ def display_bus_route_on_map(route_name, stops_data, bus_location=None):
     webbrowser.open(map_filename)
     print("✅ 完成！")
 
-# --- 將站牌數據輸出為 CSV 檔案的函式 (更新欄位) ---
-def export_stops_to_csv(route_name, stops_data):
+# --- 將站牌數據輸出為 CSV 檔案的函式 ---
+def export_stops_to_csv(route_name, stops_data, estimated_times=None):
     """
     將公車路線的站牌數據輸出為 CSV 檔案。
-    stops_data: 列表，每個元素是一個字典，包含 'name', 'lat', 'lon', 'stop_id', 'direction', 'estimated_time'
+    stops_data: 列表，每個元素是一個字典，包含 'name', 'lat', 'lon', 'stop_id'
+    estimated_times: 字典，鍵為站牌名稱，值為預估時間
     """
     if not stops_data:
         print(f"沒有路線 '{route_name}' 的站牌數據可輸出到 CSV。")
         return
 
-    csv_filename = f"bus_route_{route_name}_stops_with_time.csv" # 更改檔案名稱
+    csv_filename = f"bus_route_{route_name}_stops.csv"
     try:
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-            # 定義 CSV 檔頭，新增 '方向' 和 '預估到站時間'
-            fieldnames = ['方向', '站牌名稱', '預估到站時間', '緯度', '經度', '站牌ID']
+            # 定義 CSV 檔頭
+            fieldnames = ['站序', '站牌名稱', '緯度', '經度', '站牌ID', '預估時間']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
             writer.writeheader() # 寫入標題行
-            for stop in stops_data:
+            for i, stop in enumerate(stops_data):
+                est_time = estimated_times.get(stop['name'], '未知') if estimated_times else '未知'
                 writer.writerow({
-                    '方向': stop.get('direction', ''),
+                    '站序': i + 1,
                     '站牌名稱': stop.get('name', ''),
-                    '預估到站時間': stop.get('estimated_time', ''),
                     '緯度': stop.get('lat', ''),
                     '經度': stop.get('lon', ''),
-                    '站牌ID': stop.get('stop_id', '')
+                    '站牌ID': stop.get('stop_id', ''),
+                    '預估時間': est_time
                 })
-        print(f"站牌數據（含預估時間）已成功輸出到 '{csv_filename}'。")
+        print(f"站牌數據已成功輸出到 '{csv_filename}'。")
     except Exception as e:
         print(f"錯誤：輸出 '{csv_filename}' 時發生問題：{e}")
 
-# --- 主程式 (保持不變，因為函式接口已更新) ---
+# --- 使用 Playwright 獲取預估時間 ---
+async def fetch_estimated_times_playwright(route_id):
+    url = f"https://ebus.gov.taipei/Route/StopsOfRoute?routeid={route_id}"
+    estimated_times = {}
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
+
+        # 點擊去程按鈕
+        go_button = await page.query_selector("a.stationlist-go")
+        if go_button:
+            await go_button.click()
+            await page.wait_for_timeout(2000)
+            go_stops = await page.query_selector_all("#GoDirectionRoute li")
+            for stop in go_stops:
+                name_elem = await stop.query_selector(".auto-list-stationlist-place")
+                eta_elem = await stop.query_selector(".auto-list-stationlist-position")
+                name = await name_elem.inner_text() if name_elem else "未知"
+                eta = await eta_elem.inner_text() if eta_elem else "無資料"
+                estimated_times[name.strip()] = eta.strip()
+
+        # 點擊返程按鈕
+        return_button = await page.query_selector("a.stationlist-come")
+        if return_button:
+            await return_button.click()
+            await page.wait_for_timeout(2000)
+            return_stops = await page.query_selector_all("#BackDirectionRoute li")
+            for stop in return_stops:
+                name_elem = await stop.query_selector(".auto-list-stationlist-place")
+                eta_elem = await stop.query_selector(".auto-list-stationlist-position")
+                name = await name_elem.inner_text() if name_elem else "未知"
+                eta = await eta_elem.inner_text() if eta_elem else "無資料"
+                estimated_times[name.strip()] = eta.strip()
+
+        await browser.close()
+    return estimated_times
+
+# --- 主程式 ---
 if __name__ == "__main__":
     print("歡迎使用台北市公車路線查詢與地圖顯示工具！")
-    print("-----------------------------------")
+    print("本工具可顯示路線圖、站牌位置和預估到站時間")
+    print("=============================================")
 
     # 設置 Selenium WebDriver
     print("正在啟動 Chrome WebDriver...")
     chrome_options = Options()
-    # 這裡可以根據需要調整是否無頭模式，若要看瀏覽器操作請設為 False
-    chrome_options.add_argument("--headless=new") 
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-    chrome_options.page_load_strategy = 'normal' # 正常載入頁面，等所有資源載入完成
+    chrome_options.page_load_strategy = 'normal'
 
     driver = None
     try:
@@ -267,26 +422,25 @@ if __name__ == "__main__":
 
         # 1. 等待頁面載入，確保摺疊面板的連結已存在
         wait_initial.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-toggle='collapse'][href*='#collapse']")))
-        time.sleep(2) # 給予頁面一些額外時間渲染
+        time.sleep(5)
 
-        # 2. 展開所有摺疊區塊 (從 collapse1 到 collapse22)
-        for i in range(1, 23): # 假設從 collapse1 到 collapse22
+        # 2. 展開所有摺疊區塊
+        for i in range(1, 23):
             try:
                 collapse_link_selector = f"a[href='#collapse{i}']"
                 collapse_link = driver.find_element(By.CSS_SELECTOR, collapse_link_selector)
 
                 if collapse_link.get_attribute("aria-expanded") == "false" or "collapse" in collapse_link.get_attribute("class"):
                     driver.execute_script("arguments[0].click();", collapse_link)
-                    # print(f"已點擊展開 #collapse{i}...") # 減少雜訊
-                    time.sleep(0.3) # 每次點擊後稍微等待，讓內容載入
+                    print(f"已點擊展開 #collapse{i}...")
+                    time.sleep(0.5)
 
             except Exception as e:
-                # print(f"點擊 #collapse{i} 失敗或該元素不存在: {e}") # 減少雜訊
-                pass # 忽略點擊失敗的collapse，繼續下一個
+                print(f"點擊 #collapse{i} 失敗或該元素不存在: {e}")
 
-        time.sleep(3) # 在所有區塊點擊完畢後，給予足夠的時間讓所有內容載入到 DOM 中
+        time.sleep(3)
 
-        # 3. 重新抓取所有包含 'javascript:go' 的連結
+        # 3. 抓取所有公車路線
         bus_links = driver.find_elements(By.CSS_SELECTOR, "a[href*='javascript:go']")
         for link in bus_links:
             href = link.get_attribute("href")
@@ -299,6 +453,7 @@ if __name__ == "__main__":
                         all_bus_routes_data.append({"name": name, "route_id": route_id})
                 except Exception as e:
                     print(f"處理連結 {href} 時發生錯誤：{e}，跳過此連結。")
+        
         print(f"已獲取 {len(all_bus_routes_data)} 條公車路線。")
 
     except Exception as e:
@@ -327,7 +482,7 @@ if __name__ == "__main__":
         print("\n警告：未獲取到任何公車路線資訊。")
 
     while True:
-        route_name_input = input("\n請輸入您想查詢的公車路線號碼 (請輸入完整的名稱，例如: 299, 0東)，或輸入 'exit' 退出: ").strip()
+        route_name_input = input("\n請輸入您想查詢的公車路線號碼 (例如: 299, 0東)，或輸入 'exit' 退出: ").strip()
 
         if route_name_input.lower() == 'exit':
             print("感謝使用，再見！")
@@ -339,35 +494,36 @@ if __name__ == "__main__":
 
         selected_route = None
         for route in all_bus_routes_data:
-            if route["name"] == route_name_input:
+            if route['name'] == route_name_input:
                 selected_route = route
                 break
 
-        if not selected_route:
-            print(f"錯誤：找不到路線 '{route_name_input}' 的相關資料。請確認路線號碼是否正確。")
-            continue
-
-        route_id = selected_route["route_id"]
-        bus_name = selected_route["name"]
-
-        # 1. 從 ebus.gov.taipei 獲取路線的站牌數據 (現在包含預估時間和方向)
-        stops_data = get_bus_route_stops_from_ebus(route_id, bus_name, driver)
-
-        # 2. 顯示路線的站牌和預估時間
-        if stops_data:
-            print(f"\n路線 '{bus_name}' 的站牌數據：")
-            for stop in stops_data:
-                print(f"- 方向: {stop['direction']}, 站牌: {stop['name']} (ID: {stop['stop_id']}, 經度: {stop['lon']}, 緯度: {stop['lat']}), 預估到站時間: {stop['estimated_time']}")
+        if selected_route:
+            print(f"您選擇的路線為: {selected_route['name']} (route_id: {selected_route['route_id']})")
+            stops_data = get_bus_route_stops_from_ebus(selected_route['route_id'], selected_route['name'], driver)
+            if stops_data:
+                print("正在獲取預估到站時間（Playwright）...")
+                estimated_times = asyncio.run(fetch_estimated_times_playwright(selected_route['route_id']))
+                print(f"\n--- 路線 {selected_route['name']} 預估時間資訊 ---")
+                for stop in stops_data[:5]:
+                    time_info = estimated_times.get(stop['name'], '未知')
+                    print(f"{stop['name']}: {time_info}")
+                if len(stops_data) > 5:
+                    print("... (更多站點資訊請查看地圖)")
+                print("--------------------------------")
+                # 顯示地圖
+                display_bus_route_on_map(selected_route['name'], stops_data, None, estimated_times)
+            else:
+                print("無法取得該路線的站牌資料。")
         else:
-            print(f"未能獲取路線 '{bus_name}' 的站牌數據。")
-
-        # 3. 在地圖上顯示路線和站牌 (不再需要額外的 estimated_times 字典)
-        display_bus_route_on_map(bus_name, stops_data)
-
-        # 4. 將站牌數據輸出為 CSV 檔案
-        export_stops_to_csv(bus_name, stops_data)
+            print("找不到該路線，請確認輸入是否正確。")
+            # 提供模糊搜尋建議
+            suggestions = [route['name'] for route in all_bus_routes_data if route_name_input.lower() in route['name'].lower()]
+            if suggestions:
+                print(f"您是否想找這些路線？{suggestions[:5]}")
 
     # 關閉 WebDriver
     if driver:
+        print("正在關閉 WebDriver...")
         driver.quit()
-        print("WebDriver 已關閉。")
+        print("程式結束。")
