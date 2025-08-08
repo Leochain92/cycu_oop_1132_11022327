@@ -8,10 +8,10 @@ UNSPLASH_ACCESS_KEY = "ea87LsKFtxhy3pf3u0wGiLL_dpt2eqJQMphp_0SLdrI"
 
 # ----- 設定搜尋參數 -----
 # 搜尋關鍵字，可根據需求調整
-query = "asian engineer safety helmet"
+query = "people"
 
 # 目標下載圖片數量
-target_image_count = 1000
+target_image_count = 250
 
 # 建立圖片下載資料夾
 folder_name = "安全帽"
