@@ -17,9 +17,9 @@ from collections import defaultdict
 import shutil
 from tensorflow.keras.layers import LeakyReLU
 # === 基本設定 ===
-picture_folder = r"C:\Users\User\Desktop\2025-experimental testing images-red soil\picture"
-true_folder = r"C:\Users\User\Desktop\2025-experimental testing images-red soil\true"
-output_path = r"C:\Users\User\Desktop\sand_final_result.xlsx"
+picture_folder = r"D:\專題\照片\0-experimental testing images-red soil\picture"
+true_folder = r"D:\專題\照片\0-experimental testing images-red soil\true"
+output_path = r"D:\專題\照片\0-experimental testing images-red soil\soil_final_result.xlsx"
 image_height, image_width = 256, 256
 seed = 42
 random.seed(seed)
